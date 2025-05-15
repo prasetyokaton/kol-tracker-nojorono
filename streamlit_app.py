@@ -10,7 +10,7 @@ FILE_ID = "1FKIw9tpwiZs2VlIx4xjwPp0u_8BbxFRYF5uY8Jf_ozg"
 SHEET_NAME = "List KOL Nojorono"
 
 # --- DOWNLOAD REF FILE FROM GOOGLE DRIVE ---
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=0)  # always refresh
 def load_reference_data(file_id, sheet_name):
     url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
     response = requests.get(url)
@@ -28,17 +28,47 @@ def extract_tiktok_username_raw(url):
 
 def extract_tiktok_username_ref(url):
     url = str(url).strip()
-    if "@user" in url:
-        return None
-    if "@" in url:
-        match = re.search(r"@([^/?\s]+)", url)
-        return match.group(1).strip() if match else None
-    elif "tiktok.com" in url:
-        match = re.search(r"tiktok\.com/([^/?\s]+)", url)
-        return match.group(1).strip() if match else None
+
+    if "tiktok.com/@":
+        # Rule 1: tiktok.com/@user?
+        match = re.search(r"tiktok\.com/@([^/?\s]+)\?", url)
+        if match:
+            return match.group(1).strip()
+
+        # Rule 2: tiktok.com/@user/
+        match = re.search(r"tiktok\.com/@([^/?\s]+)/", url)
+        if match:
+            return match.group(1).strip()
+
+        # Rule 3: tiktok.com/@user (tanpa / atau ?)
+        match = re.search(r"tiktok\.com/@([^/?\s]+)$", url)
+        if match:
+            return match.group(1).strip()
+
+    elif "tiktok.com/":
+        # Rule 4: tiktok.com/user/
+        match = re.search(r"tiktok\.com/([^@/?\s]+)/", url)
+        if match:
+            return match.group(1).strip()
+
+        # Rule 5: tiktok.com/user
+        match = re.search(r"tiktok\.com/([^@/?\s]+)$", url)
+        if match:
+            return match.group(1).strip()
+
+        # Rule 6: tiktok.com/user?
+        match = re.search(r"tiktok\.com/([^@/?\s]+)\?", url)
+        if match:
+            return match.group(1).strip()
+
+    # Rule 7: @user (bukan link)
     elif url.startswith("@"):
         return url[1:].strip()
+
+    # Tidak cocok
     return None
+
+
 
 # --- UI ---
 st.title("🎯 Creator Type Classifier (Google Drive Ref)")
@@ -52,9 +82,16 @@ if uploaded_file:
     if ref_df is None:
         st.stop()
 
+    # ✅ Cek apakah file benar-benar terbaca
+    #st.write("📄 Jumlah baris referensi terbaca:", len(ref_df))
+
+
     # --- Clean Reference ---
     instagram_refs = ref_df["Author Name Instagram"].dropna().astype(str).apply(lambda x: x.rstrip())
     tiktok_links = ref_df["Link Tiktok"].dropna().astype(str)
+
+    ref_usernames_series = tiktok_links.apply(extract_tiktok_username_ref).dropna()
+    #st.write("📋 Semua username referensi:", ref_usernames_series.unique())
 
     raw_df = pd.read_excel(uploaded_file)
     df = raw_df.copy()
@@ -86,12 +123,25 @@ if uploaded_file:
                     creator_type = "Organic"
             else:
                 continue
-        elif channel == "TikTok":
+        elif channel == "Tiktok":
             raw_username = extract_tiktok_username_raw(link)
+            #st.write(f"RAW URL: {link} ➜ Parsed username: {raw_username}")
             ref_usernames = tiktok_links.apply(extract_tiktok_username_ref).dropna().tolist()
-            if raw_username and raw_username in ref_usernames:
+            if raw_username and raw_username in ref_usernames_series.values:
                 creator_type = "KOL"
-                match_row = ref_df[tiktok_links.apply(extract_tiktok_username_ref) == raw_username]
+                # Buat dataframe baru dari hasil parsing
+                ref_usernames_df = pd.DataFrame({
+                    "Link Tiktok": tiktok_links,
+                    "Parsed Username": tiktok_links.apply(extract_tiktok_username_ref)
+                }).dropna()
+
+                # Saat mencocokkan
+                match_row = ref_usernames_df[ref_usernames_df["Parsed Username"] == raw_username]
+                if not match_row.empty:
+                    link_url = match_row["Link Tiktok"].values[0]
+                    tiktok_kols.append((author, link_url))
+
+
                 link_url = match_row["Link Tiktok"].values[0] if not match_row.empty else "-"
                 tiktok_kols.append((author, link_url))
             else:
@@ -108,7 +158,7 @@ if uploaded_file:
     organic_count = (df["Creator Type"] == "Organic").sum()
 
     st.success(f"KOL Track: {kol_count} data")
-    st.info(f"Organic: {organic_count} data")
+    #st.info(f"Organic: {organic_count} data")
 
     # --- Instagram Tracking ---
     if instagram_kols:
