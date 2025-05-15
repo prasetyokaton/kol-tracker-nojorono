@@ -102,6 +102,7 @@ if uploaded_file:
 
     author_idx = df.columns.get_loc("Author")
     df.insert(author_idx, "Creator Type", "")
+    df["Followers"] = df[["Original Reach", "Potential Reach"]].sum(axis=1)
 
     instagram_kols = []
     tiktok_kols = []
@@ -120,7 +121,8 @@ if uploaded_file:
                     link_url = match["Link Tiktok"].values[0] if not match.empty else "-"
                     instagram_kols.append((author, link_url))
                 else:
-                    creator_type = "Organic"
+                    # Tidak ditemukan di referensi → cek followers
+                    creator_type = "KOL" if row["Followers"] >= 10000 else "Organic"
             else:
                 continue
         elif channel == "Tiktok":
@@ -145,9 +147,13 @@ if uploaded_file:
                 link_url = match_row["Link Tiktok"].values[0] if not match_row.empty else "-"
                 tiktok_kols.append((author, link_url))
             else:
-                creator_type = "Organic"
+                creator_type = "KOL" if row["Followers"] >= 10000 else "Organic"
         elif channel in ["Online Media", "Forum", "Blog"]:
             creator_type = ""
+        
+        elif channel in ["Twitter", "Facebook", "Youtube"]:
+            creator_type = "KOL" if row["Followers"] >= 10000 else "Organic"
+
         else:
             creator_type = "Organic"
 
